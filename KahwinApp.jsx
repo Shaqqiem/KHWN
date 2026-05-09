@@ -19,7 +19,7 @@ import {
 
 // ─── FIREBASE CONFIG ──────────────────────────────────────
 const firebaseConfig = {
-  apiKey: "AIzaSyAA502qnoU0tIhpt13eZIDOhxDcIMCVCUI",
+  apiKey: "AIzaSyAA502qnoU0tIhpt13eZlD0hxDclMCVCUI",
   authDomain: "kahwinapp-83e9a.firebaseapp.com",
   projectId: "kahwinapp-83e9a",
   storageBucket: "kahwinapp-83e9a.firebasestorage.app",
