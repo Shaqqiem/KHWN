@@ -15,13 +15,11 @@ import {
   createUserWithEmailAndPassword, signOut, updateProfile,
   GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail
 } from "firebase/auth";
-import {
-  getStorage, ref as sref, uploadBytes, getDownloadURL
-} from "firebase/storage";
+// Storage: guna Base64 dalam Firestore, tak perlu Firebase Storage
 
 // ─── FIREBASE CONFIG ──────────────────────────────────────
 const firebaseConfig = {
-  apiKey: "AIzaSyAA502qnoU0tIhpt13eZlD0hxDclMCVCUI",
+  apiKey: "AIzaSyAA502qnoU0tIhpt13eZIDOhxDcIMCVCUI",
   authDomain: "kahwinapp-83e9a.firebaseapp.com",
   projectId: "kahwinapp-83e9a",
   storageBucket: "kahwinapp-83e9a.firebasestorage.app",
@@ -32,8 +30,31 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
-const storage = getStorage(app);
 const googleProvider = new GoogleAuthProvider();
+
+// ─── BASE64 HELPER ────────────────────────────────────────
+function fileToBase64(file) {
+  return new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX = 800;
+        let w = img.width, h = img.height;
+        if (w > MAX) { h = (h * MAX) / w; w = MAX; }
+        if (h > MAX) { w = (w * MAX) / h; h = MAX; }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        res(canvas.toDataURL("image/jpeg", 0.75));
+      };
+      img.onerror = rej;
+      img.src = e.target.result;
+    };
+    reader.onerror = rej;
+    reader.readAsDataURL(file);
+  });
+}
 
 // ─── HELPERS ─────────────────────────────────────────────
 const fmtRM = (v, c="MYR") => {
@@ -381,17 +402,17 @@ function HeroBgModal({ wedding, onClose, onSave }) {
   const [mode, setMode] = useState(wedding.heroBgType||"color");
   const [color, setColor] = useState(wedding.heroBg||"#1a1a1a");
   const [uploading, setUploading] = useState(false);
+  const [preview, setPreview] = useState(wedding.heroBgUrl||"");
   const fileRef = useRef();
 
-  async function uploadImg(file) {
+  async function handleImg(file) {
     setUploading(true);
     try {
-      const r = sref(storage, `weddings/${wedding.id}/hero_bg`);
-      await uploadBytes(r, file);
-      const url = await getDownloadURL(r);
-      await onSave({ heroBgType:"image", heroBgUrl:url, heroBg:color });
+      const b64 = await fileToBase64(file);
+      setPreview(b64);
+      await onSave({ heroBgType:"image", heroBgUrl:b64, heroBg:color });
       onClose();
-    } catch(e){ alert("Gagal upload. Pastikan Firebase Storage diaktifkan."); }
+    } catch(e){ alert("Gagal proses gambar. Cuba lagi."); }
     setUploading(false);
   }
 
@@ -419,12 +440,12 @@ function HeroBgModal({ wedding, onClose, onSave }) {
           <button className="btn-primary" onClick={saveColor}>Simpan</button>
         </>)}
         {mode==="image"&&(<>
-          <p style={{fontSize:13,color:"var(--mid)",marginBottom:14,lineHeight:1.6}}>Upload gambar untuk dijadikan latar belakang kad nama pengantin.</p>
+          <p style={{fontSize:13,color:"var(--mid)",marginBottom:14,lineHeight:1.6}}>Upload gambar untuk latar belakang. Gambar akan dikecilkan automatik.</p>
           <label className="img-upload-label">
-            <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>e.target.files[0]&&uploadImg(e.target.files[0])}/>
-            {uploading?"Uploading...":"📁 Pilih Gambar"}
+            <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>e.target.files[0]&&handleImg(e.target.files[0])}/>
+            {uploading?"Memproses gambar...":"📁 Pilih Gambar"}
           </label>
-          {wedding.heroBgUrl&&<img src={wedding.heroBgUrl} style={{width:"100%",borderRadius:12,marginBottom:14}} alt="preview"/>}
+          {preview&&<img src={preview} style={{width:"100%",borderRadius:12,marginBottom:14}} alt="preview"/>}
         </>)}
       </div>
     </div>
@@ -796,25 +817,21 @@ function TimelinePage({ timeline, onAdd, onDelete, onEdit, wedding }) {
 // ─── INSPIRASI ───────────────────────────────────────────
 function InspirasiPage({ inspirasi, onAdd, onDelete, onEdit, weddingId }) {
   const [show,setShow]=useState(false), [editItem,setEditItem]=useState(null);
-  const [nota,setNota]=useState(""), [imgFile,setImgFile]=useState(null), [preview,setPreview]=useState(""), [saving,setSaving]=useState(false);
+  const [nota,setNota]=useState(""), [preview,setPreview]=useState(""), [saving,setSaving]=useState(false);
   const fileRef=useRef();
 
-  function openAdd(){ setEditItem(null); setNota(""); setImgFile(null); setPreview(""); setShow(true); }
-  function openEdit(item){ setEditItem(item); setNota(item.nota||""); setImgFile(null); setPreview(item.imgUrl||""); setShow(true); }
+  function openAdd(){ setEditItem(null); setNota(""); setPreview(""); setShow(true); }
+  function openEdit(item){ setEditItem(item); setNota(item.nota||""); setPreview(item.imgUrl||""); setShow(true); }
 
-  function onFileChange(e){
+  async function onFileChange(e){
     const f=e.target.files[0]; if(!f)return;
-    setImgFile(f); setPreview(URL.createObjectURL(f));
+    const b64 = await fileToBase64(f);
+    setPreview(b64);
   }
 
   async function save(){
     setSaving(true);
-    let imgUrl = editItem?.imgUrl||"";
-    if(imgFile){
-      const r=sref(storage,`weddings/${weddingId}/inspirasi/${Date.now()}`);
-      await uploadBytes(r,imgFile);
-      imgUrl=await getDownloadURL(r);
-    }
+    const imgUrl = preview || editItem?.imgUrl || "";
     if(editItem){ await onEdit(editItem.id,{nota,imgUrl}); }
     else { await onAdd({nota,imgUrl,createdAt:new Date().toISOString()}); }
     setSaving(false); setShow(false);
@@ -835,7 +852,6 @@ function InspirasiPage({ inspirasi, onAdd, onDelete, onEdit, weddingId }) {
         ))}
       </div>
 
-      {/* View modal */}
       {viewItem&&(
         <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setViewItem(null)}>
           <div className="modal" style={{maxHeight:"90vh"}}>
@@ -845,7 +861,7 @@ function InspirasiPage({ inspirasi, onAdd, onDelete, onEdit, weddingId }) {
             <div style={{display:"flex",gap:10}}>
               <button className="btn-cancel" style={{flex:1}} onClick={()=>setViewItem(null)}>Tutup</button>
               <button className="btn-save" style={{flex:1}} onClick={()=>{setViewItem(null);openEdit(viewItem);}}>✏️ Edit</button>
-              <button style={{flex:1,padding:13,background:"#FFE8EC",color:"#E05050",border:"none",borderRadius:"var(--radius-sm)",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"DM Sans,sans-serif"}} onClick={()=>{onDelete(viewItem.id);setViewItem(null);}}>🗑 Padam</button>
+              <button style={{flex:1,padding:13,background:"var(--rose-pale)",color:"#E05050",border:"none",borderRadius:"var(--radius-sm)",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"DM Sans,sans-serif"}} onClick={()=>{onDelete(viewItem.id);setViewItem(null);}}>🗑 Padam</button>
             </div>
           </div>
         </div>
@@ -858,11 +874,11 @@ function InspirasiPage({ inspirasi, onAdd, onDelete, onEdit, weddingId }) {
             <div className="modal-title">{editItem?"Edit":"Tambah"} Inspirasi 🖼️</div>
             <label className="img-upload-label">
               <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={onFileChange}/>
-              {preview?<img src={preview} style={{width:"100%",borderRadius:10}} alt="preview"/>:"📁 Pilih Gambar"}
+              {preview?<img src={preview} style={{width:"100%",borderRadius:10}} alt="preview"/>:"📁 Pilih Gambar (dikecilkan auto)"}
             </label>
             <div className="field-label">Nota / Keterangan</div>
             <textarea className="field-input" rows={3} placeholder="Tulis nota untuk inspirasi ini..." value={nota} onChange={e=>setNota(e.target.value)}/>
-            <div className="modal-footer"><button className="btn-cancel" onClick={()=>setShow(false)}>Batal</button><button className="btn-save" onClick={save} disabled={saving}>{saving?"Uploading...":"Simpan"}</button></div>
+            <div className="modal-footer"><button className="btn-cancel" onClick={()=>setShow(false)}>Batal</button><button className="btn-save" onClick={save} disabled={saving}>{saving?"Menyimpan...":"Simpan"}</button></div>
           </div>
         </div>
       )}
