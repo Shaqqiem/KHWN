@@ -15,25 +15,46 @@ import {
   createUserWithEmailAndPassword, signOut, updateProfile,
   GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail
 } from "firebase/auth";
-import {
-  getStorage, ref as sref, uploadBytes, getDownloadURL
-} from "firebase/storage";
+// Storage: guna Base64 dalam Firestore, tak perlu Firebase Storage
 
 // ─── FIREBASE CONFIG ──────────────────────────────────────
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID",
+  apiKey: "AIzaSyAA502qnoU0tIhpt13eZlD0hxDclMCVCUI",
+  authDomain: "kahwinapp-83e9a.firebaseapp.com",
+  projectId: "kahwinapp-83e9a",
+  storageBucket: "kahwinapp-83e9a.firebasestorage.app",
+  messagingSenderId: "144754868373",
+  appId: "1:144754868373:web:0b46b29c57b7502a409b9c",
 };
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
-const storage = getStorage(app);
 const googleProvider = new GoogleAuthProvider();
+
+// ─── BASE64 HELPER ────────────────────────────────────────
+function fileToBase64(file) {
+  return new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX = 800;
+        let w = img.width, h = img.height;
+        if (w > MAX) { h = (h * MAX) / w; w = MAX; }
+        if (h > MAX) { w = (w * MAX) / h; h = MAX; }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        res(canvas.toDataURL("image/jpeg", 0.75));
+      };
+      img.onerror = rej;
+      img.src = e.target.result;
+    };
+    reader.onerror = rej;
+    reader.readAsDataURL(file);
+  });
+}
 
 // ─── HELPERS ─────────────────────────────────────────────
 const fmtRM = (v, c="MYR") => {
@@ -376,23 +397,121 @@ function InviteModal({ wedding, user, onClose }) {
   );
 }
 
+// ─── IMAGE CROPPER ───────────────────────────────────────
+function ImageCropper({ src, aspectRatio, onCrop, onCancel }) {
+  const canvasRef = useRef();
+  const imgRef = useRef();
+  const containerRef = useRef();
+  const [drag, setDrag] = useState(false);
+  const [pos, setPos] = useState({x:0,y:0});
+  const [scale, setScale] = useState(1);
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const startRef = useRef({});
+
+  const CROP_W = 340, CROP_H = Math.round(340 / aspectRatio);
+
+  function onImgLoad() {
+    setImgLoaded(true);
+    setPos({x:0,y:0});
+    setScale(1);
+  }
+
+  function getEventPos(e) {
+    if (e.touches) return {x:e.touches[0].clientX, y:e.touches[0].clientY};
+    return {x:e.clientX, y:e.clientY};
+  }
+
+  function onStart(e) {
+    e.preventDefault();
+    const p = getEventPos(e);
+    startRef.current = {mx:p.x, my:p.y, px:pos.x, py:pos.y};
+    setDrag(true);
+  }
+
+  function onMove(e) {
+    if (!drag) return;
+    e.preventDefault();
+    const p = getEventPos(e);
+    setPos({x:startRef.current.px+(p.x-startRef.current.mx), y:startRef.current.py+(p.y-startRef.current.my)});
+  }
+
+  function onEnd() { setDrag(false); }
+
+  function doCrop() {
+    const img = imgRef.current;
+    if (!img) return;
+    const canvas = document.createElement("canvas");
+    const OUT_W = 800, OUT_H = Math.round(800/aspectRatio);
+    canvas.width = OUT_W; canvas.height = OUT_H;
+    const ctx = canvas.getContext("2d");
+    // Scale from display to actual
+    const dispW = img.naturalWidth * scale;
+    const dispH = img.naturalHeight * scale;
+    const offX = (CROP_W/2) - (dispW/2) - pos.x;
+    const offY = (CROP_H/2) - (dispH/2) - pos.y;
+    const scaleX = img.naturalWidth / dispW;
+    const scaleY = img.naturalHeight / dispH;
+    ctx.drawImage(img,
+      offX * scaleX, offY * scaleY,
+      CROP_W * scaleX, CROP_H * scaleY,
+      0, 0, OUT_W, OUT_H
+    );
+    onCrop(canvas.toDataURL("image/jpeg", 0.85));
+  }
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:14}}>
+      <p style={{fontSize:13,color:"var(--mid)",textAlign:"center"}}>Seret gambar untuk adjust posisi. Pinch atau slider untuk zoom.</p>
+      <div ref={containerRef} style={{position:"relative",width:CROP_W,height:CROP_H,overflow:"hidden",borderRadius:12,border:"2px solid var(--rose)",cursor:drag?"grabbing":"grab",touchAction:"none",background:"#111"}}
+        onMouseDown={onStart} onMouseMove={onMove} onMouseUp={onEnd} onMouseLeave={onEnd}
+        onTouchStart={onStart} onTouchMove={onMove} onTouchEnd={onEnd}>
+        <img ref={imgRef} src={src} onLoad={onImgLoad} draggable={false}
+          style={{position:"absolute",left:"50%",top:"50%",transform:`translate(calc(-50% + ${pos.x}px), calc(-50% + ${pos.y}px)) scale(${scale})`,transformOrigin:"center",maxWidth:"none",userSelect:"none",pointerEvents:"none"}}
+          alt="crop"
+        />
+        {/* Grid overlay */}
+        <div style={{position:"absolute",inset:0,pointerEvents:"none",border:"1px solid rgba(255,255,255,0.3)"}}>
+          <div style={{position:"absolute",left:"33%",top:0,bottom:0,borderLeft:"1px solid rgba(255,255,255,0.2)"}}/>
+          <div style={{position:"absolute",left:"66%",top:0,bottom:0,borderLeft:"1px solid rgba(255,255,255,0.2)"}}/>
+          <div style={{position:"absolute",top:"33%",left:0,right:0,borderTop:"1px solid rgba(255,255,255,0.2)"}}/>
+          <div style={{position:"absolute",top:"66%",left:0,right:0,borderTop:"1px solid rgba(255,255,255,0.2)"}}/>
+        </div>
+      </div>
+      <div style={{width:"100%"}}>
+        <div style={{fontSize:12,color:"var(--mid)",marginBottom:6}}>Zoom</div>
+        <input type="range" min="0.5" max="3" step="0.05" value={scale}
+          onChange={e=>setScale(parseFloat(e.target.value))}
+          style={{width:"100%",accentColor:"var(--rose)"}}/>
+      </div>
+      <div className="modal-footer" style={{width:"100%"}}>
+        <button className="btn-cancel" onClick={onCancel}>Batal</button>
+        <button className="btn-save" onClick={doCrop}>✂️ Crop & Simpan</button>
+      </div>
+    </div>
+  );
+}
+
 // ─── HERO BG MODAL ───────────────────────────────────────
 function HeroBgModal({ wedding, onClose, onSave }) {
   const [mode, setMode] = useState(wedding.heroBgType||"color");
   const [color, setColor] = useState(wedding.heroBg||"#1a1a1a");
-  const [uploading, setUploading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [cropSrc, setCropSrc] = useState(null);
   const fileRef = useRef();
 
-  async function uploadImg(file) {
-    setUploading(true);
+  async function handleImg(file) {
+    const reader = new FileReader();
+    reader.onload = e => setCropSrc(e.target.result);
+    reader.readAsDataURL(file);
+  }
+
+  async function handleCrop(b64) {
+    setSaving(true);
     try {
-      const r = sref(storage, `weddings/${wedding.id}/hero_bg`);
-      await uploadBytes(r, file);
-      const url = await getDownloadURL(r);
-      await onSave({ heroBgType:"image", heroBgUrl:url, heroBg:color });
+      await onSave({ heroBgType:"image", heroBgUrl:b64, heroBg:color });
       onClose();
-    } catch(e){ alert("Gagal upload. Pastikan Firebase Storage diaktifkan."); }
-    setUploading(false);
+    } catch(e){ alert("Gagal simpan. Cuba lagi."); }
+    setSaving(false);
   }
 
   async function saveColor() {
@@ -401,30 +520,46 @@ function HeroBgModal({ wedding, onClose, onSave }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&!cropSrc&&onClose()}>
       <div className="modal">
         <div className="modal-handle"/>
         <div className="modal-title">Tukar Latar Hero 🎨</div>
-        <div className="radio-group">
-          <div className={`radio-option ${mode==="color"?"active":""}`} onClick={()=>setMode("color")}>🎨 Warna</div>
-          <div className={`radio-option ${mode==="image"?"active":""}`} onClick={()=>setMode("image")}>🖼️ Gambar</div>
-        </div>
-        {mode==="color"&&(<>
-          <div className="field-label">Pilih Warna</div>
-          <div className="color-swatches">
-            {BG_COLORS.map(c=><div key={c} className={`color-swatch ${color===c?"active":""}`} style={{background:c}} onClick={()=>setColor(c)}/>)}
+
+        {cropSrc ? (
+          <ImageCropper
+            src={cropSrc}
+            aspectRatio={16/9}
+            onCrop={handleCrop}
+            onCancel={()=>setCropSrc(null)}
+          />
+        ) : (<>
+          <div className="radio-group">
+            <div className={`radio-option ${mode==="color"?"active":""}`} onClick={()=>setMode("color")}>🎨 Warna</div>
+            <div className={`radio-option ${mode==="image"?"active":""}`} onClick={()=>setMode("image")}>🖼️ Gambar</div>
           </div>
-          <div className="field-label">Atau warna custom</div>
-          <input type="color" value={color} onChange={e=>setColor(e.target.value)} style={{width:"100%",height:44,border:"none",borderRadius:12,cursor:"pointer",background:"none",marginBottom:14}}/>
-          <button className="btn-primary" onClick={saveColor}>Simpan</button>
-        </>)}
-        {mode==="image"&&(<>
-          <p style={{fontSize:13,color:"var(--mid)",marginBottom:14,lineHeight:1.6}}>Upload gambar untuk dijadikan latar belakang kad nama pengantin.</p>
-          <label className="img-upload-label">
-            <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>e.target.files[0]&&uploadImg(e.target.files[0])}/>
-            {uploading?"Uploading...":"📁 Pilih Gambar"}
-          </label>
-          {wedding.heroBgUrl&&<img src={wedding.heroBgUrl} style={{width:"100%",borderRadius:12,marginBottom:14}} alt="preview"/>}
+          {mode==="color"&&(<>
+            <div className="field-label">Pilih Warna</div>
+            <div className="color-swatches">
+              {BG_COLORS.map(c=><div key={c} className={`color-swatch ${color===c?"active":""}`} style={{background:c}} onClick={()=>setColor(c)}/>)}
+            </div>
+            <div className="field-label">Atau warna custom</div>
+            <input type="color" value={color} onChange={e=>setColor(e.target.value)} style={{width:"100%",height:44,border:"none",borderRadius:12,cursor:"pointer",background:"none",marginBottom:14}}/>
+            <button className="btn-primary" onClick={saveColor}>Simpan</button>
+          </>)}
+          {mode==="image"&&(<>
+            <p style={{fontSize:13,color:"var(--mid)",marginBottom:14,lineHeight:1.6}}>Upload gambar lepas tu boleh crop ikut suka! 🎉</p>
+            <label className="img-upload-label">
+              <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>e.target.files[0]&&handleImg(e.target.files[0])}/>
+              📁 Pilih Gambar
+            </label>
+            {wedding.heroBgUrl&&(
+              <div style={{marginTop:8}}>
+                <div style={{fontSize:12,color:"var(--mid)",marginBottom:6}}>Gambar semasa:</div>
+                <img src={wedding.heroBgUrl} style={{width:"100%",borderRadius:12,marginBottom:8}} alt="current"/>
+                <button className="btn-primary" onClick={()=>fileRef.current?.click()}>Tukar Gambar</button>
+              </div>
+            )}
+          </>)}
         </>)}
       </div>
     </div>
@@ -453,9 +588,12 @@ function Dashboard({ wedding, onNav, expenses, checklist, guests, onUpdateWeddin
     onUpdateWedding({...wedding,...data});
   }
 
+  // Banner hanya keluar kalau belum ada pasangan langsung (team = 1 orang je)
+  const hasPartner = (wedding.team||[]).length > 1;
+
   return (
     <div>
-      {!joined&&(
+      {!hasPartner&&(
         <div className="invite-banner">
           <span style={{fontSize:28}}>💑</span>
           <div><div style={{color:"white",fontSize:14,fontWeight:700}}>Jemput Pasangan</div><div style={{color:"rgba(255,255,255,0.85)",fontSize:12}}>Plan bersama-sama!</div></div>
@@ -721,10 +859,54 @@ function SavingsPage({ savings, onAdd, onDelete, wedding }) {
   );
 }
 
-// ─── TIMELINE (editable) ─────────────────────────────────
-function TimelinePage({ timeline, onAdd, onDelete, onEdit, wedding }) {
+// ─── DEFAULT TIMELINE ITEMS ──────────────────────────────
+const DEFAULT_TIMELINE = [
+  // 6-12 bulan sebelum
+  {label:"Anggarkan jumlah tetamu & senaraikan",icon:"📋",monthsBefore:12},
+  {label:"Uruskan budget perkahwinan",icon:"💰",monthsBefore:12},
+  {label:"Rancang aturcara majlis",icon:"📝",monthsBefore:11},
+  {label:"Kursus kahwin",icon:"📚",monthsBefore:11},
+  {label:"Tempah lokasi majlis",icon:"🏛️",monthsBefore:10},
+  {label:"Tempah pakej perkahwinan",icon:"💒",monthsBefore:10},
+  {label:"Tempah jurufoto & juruvideo",icon:"📷",monthsBefore:9},
+  {label:"Bincang barang hantaran",icon:"🎁",monthsBefore:9},
+  {label:"Pilih katerer",icon:"🍽️",monthsBefore:8},
+  // 5 bulan sebelum
+  {label:"Pemeriksaan HIV",icon:"🏥",monthsBefore:5},
+  {label:"Urus dokumen permohonan pernikahan",icon:"📄",monthsBefore:5},
+  {label:"Tempah pengaraca majlis/DJ/Audio",icon:"🎵",monthsBefore:5},
+  {label:"Tetapkan konsep/warna pelamin",icon:"👑",monthsBefore:5},
+  {label:"Tema/warna untuk keluarga",icon:"👗",monthsBefore:5},
+  {label:"Beli barang hantaran",icon:"🛍️",monthsBefore:5},
+  {label:"Apply CUTI (penting!!)",icon:"📅",monthsBefore:5},
+  {label:"Tempah tiket/pakej bulan madu",icon:"✈️",monthsBefore:5},
+  {label:"Booking homestay",icon:"🏨",monthsBefore:5},
+  // 3 bulan sebelum
+  {label:"Serahkan dokumen di Pejabat Agama",icon:"🕌",monthsBefore:3},
+  {label:"Pastikan semua kelengkapan siap ditempah",icon:"✅",monthsBefore:3},
+  {label:"Pilih baju majlis & beri ukuran",icon:"👗",monthsBefore:3},
+  {label:"Pilih pengapit & tentukan tema/pakaian",icon:"💑",monthsBefore:3},
+  {label:"Food testing dengan katerer",icon:"🍴",monthsBefore:3},
+  {label:"Tentukan dekorasi pelamin dengan butik",icon:"🌸",monthsBefore:3},
+  {label:"Tempah kad kahwin",icon:"💌",monthsBefore:3},
+  {label:"Bunga pahar/telur & goodies",icon:"🌺",monthsBefore:3},
+  {label:"Pre-wedding photoshoot",icon:"📸",monthsBefore:3},
+  // 1 bulan sebelum
+  {label:"Hubungi & semak status permohonan nikah",icon:"📞",monthsBefore:1},
+  {label:"Senarai alamat tetamu untuk pos kad",icon:"📬",monthsBefore:1},
+  {label:"Pos kad kahwin",icon:"💌",monthsBefore:1},
+  {label:"Cuba solekan dengan juru andam",icon:"💄",monthsBefore:1},
+  {label:"Rancang kedudukan tempat duduk tetamu",icon:"🪑",monthsBefore:1},
+  {label:"Buat rawatan spa/muka",icon:"💆",monthsBefore:1},
+  {label:"Tempah juru ukir inai",icon:"🌿",monthsBefore:1},
+  {label:"Gubah dekorasi hantaran",icon:"🎁",monthsBefore:1},
+];
+
+// ─── TIMELINE (editable + default) ───────────────────────
+function TimelinePage({ timeline, onAdd, onDelete, onEdit, wedding, onInitDefault }) {
   const [show,setShow]=useState(false), [editItem,setEditItem]=useState(null);
   const [label,setLabel]=useState(""), [icon,setIcon]=useState("📌"), [dateVal,setDateVal]=useState(""), [saving,setSaving]=useState(false);
+  const [initLoading,setInitLoading]=useState(false);
 
   function openAdd(){ setEditItem(null); setLabel(""); setIcon("📌"); setDateVal(""); setShow(true); }
   function openEdit(item){ setEditItem(item); setLabel(item.label); setIcon(item.icon||"📌"); setDateVal(item.date||""); setShow(true); }
@@ -736,40 +918,131 @@ function TimelinePage({ timeline, onAdd, onDelete, onEdit, wedding }) {
     setSaving(false); setShow(false);
   }
 
+  async function initDefault(){
+    setInitLoading(true);
+    const wd = new Date(wedding.date);
+    for(const item of DEFAULT_TIMELINE){
+      const d = new Date(wd);
+      d.setMonth(d.getMonth() - item.monthsBefore);
+      const dateStr = d.toISOString().split("T")[0];
+      await onAdd({label:item.label, icon:item.icon, date:dateStr, monthsBefore:item.monthsBefore, createdAt:new Date().toISOString()});
+    }
+    setInitLoading(false);
+  }
+
   const today = new Date();
   const sorted = [...timeline].sort((a,b)=>new Date(a.date)-new Date(b.date));
 
-  const ICONS = ["📌","🏛️","👗","👑","💌","📷","📬","✂️","📋","💍","💒","🎉","🎂","🛍️","✈️","🏨","💐","🎵"];
+  // Group by monthsBefore category
+  const groups = [
+    {title:"6-12 Bulan Sebelum",min:6,max:12},
+    {title:"5 Bulan Sebelum",min:5,max:5},
+    {title:"3 Bulan Sebelum",min:3,max:4},
+    {title:"1 Bulan Sebelum",min:0,max:2},
+  ];
+
+  const ICONS = ["📌","🏛️","👗","👑","💌","📷","📬","✂️","📋","💍","💒","🎉","🎂","🛍️","✈️","🏨","💐","🎵","🍽️","🎁","🌸","📄","🏥","🎵","🪑","💄","🌿","📸","📞","📬","💑","✅"];
 
   return (
     <div>
-      <button className="add-btn" onClick={openAdd}>＋ Tambah Timeline</button>
+      <div style={{display:"flex",gap:10,margin:"0 16px 12px"}}>
+        <button className="add-btn" style={{margin:0,flex:1}} onClick={openAdd}>＋ Tambah</button>
+        {timeline.length===0&&(
+          <button onClick={initDefault} disabled={initLoading}
+            style={{flex:2,padding:13,background:"var(--dark)",color:"white",border:"none",borderRadius:"var(--radius-sm)",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"DM Sans,sans-serif",opacity:initLoading?0.6:1}}>
+            {initLoading?"Memuatkan...":"✨ Muat Default Checklist"}
+          </button>
+        )}
+      </div>
+
       <div style={{padding:"0 16px"}}>
-        {sorted.length===0&&<div className="empty-state"><div className="empty-icon">📅</div><div className="empty-title">Tiada timeline lagi</div><div className="empty-sub">Tambah milestone perkahwinan kamu</div></div>}
-        <div style={{position:"relative",paddingLeft:28}}>
-          {sorted.length>0&&<div style={{position:"absolute",left:10,top:0,bottom:0,width:2,background:"var(--border)",borderRadius:2}}/>}
-          {sorted.map((m,i)=>{
-            const past=new Date(m.date)<today;
-            return (
-              <div key={m.id} style={{display:"flex",gap:14,marginBottom:20,position:"relative"}}>
-                <div style={{position:"absolute",left:-22,top:14,width:16,height:16,borderRadius:"50%",background:past?"var(--rose)":"var(--card)",border:"2px solid var(--rose)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  {past&&<span style={{color:"white",fontSize:8,fontWeight:700}}>✓</span>}
-                </div>
-                <div className="timeline-item" style={{opacity:past?0.75:1}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <span style={{fontSize:22}}>{m.icon||"📌"}</span>
-                    <div style={{display:"flex",gap:6}}>
-                      <button className="edit-btn" onClick={()=>openEdit(m)}>✏️</button>
-                      <button className="delete-btn" onClick={()=>onDelete(m.id)}>🗑</button>
-                    </div>
+        {sorted.length===0&&(
+          <div className="empty-state">
+            <div className="empty-icon">📅</div>
+            <div className="empty-title">Tiada timeline lagi</div>
+            <div className="empty-sub">Klik "Muat Default Checklist" untuk timeline lengkap atau tambah sendiri</div>
+          </div>
+        )}
+
+        {sorted.length>0&&(
+          <div style={{position:"relative",paddingLeft:28}}>
+            <div style={{position:"absolute",left:10,top:0,bottom:0,width:2,background:"var(--border)",borderRadius:2}}/>
+            {groups.map(grp=>{
+              const items = sorted.filter(m=>{
+                const mb = m.monthsBefore;
+                if(mb===undefined){
+                  // kalau takde monthsBefore, kira dari tarikh
+                  const wd=new Date(wedding.date), md=new Date(m.date);
+                  const diff = Math.round((wd-md)/(1000*60*60*24*30));
+                  return diff>=grp.min && diff<=grp.max;
+                }
+                return mb>=grp.min && mb<=grp.max;
+              });
+              if(items.length===0) return null;
+              return (
+                <div key={grp.title}>
+                  <div style={{fontSize:12,fontWeight:700,color:"var(--rose)",textTransform:"uppercase",letterSpacing:"0.8px",marginBottom:10,marginLeft:-8,paddingLeft:8,borderLeft:"3px solid var(--rose)"}}>
+                    {grp.title}
                   </div>
-                  <div style={{fontSize:14,fontWeight:600,color:"var(--dark)",marginTop:8}}>{m.label}</div>
-                  <div style={{fontSize:12,color:past?"var(--rose)":"var(--mid)",marginTop:4,fontWeight:past?600:400}}>{fmtDate(m.date)}</div>
+                  {items.map(m=>{
+                    const past=new Date(m.date)<today;
+                    return (
+                      <div key={m.id} style={{display:"flex",gap:14,marginBottom:14,position:"relative"}}>
+                        <div style={{position:"absolute",left:-22,top:12,width:16,height:16,borderRadius:"50%",background:past?"var(--rose)":"var(--card)",border:"2px solid var(--rose)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                          {past&&<span style={{color:"white",fontSize:8,fontWeight:700}}>✓</span>}
+                        </div>
+                        <div className="timeline-item" style={{opacity:past?0.7:1}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                            <div style={{display:"flex",alignItems:"center",gap:8}}>
+                              <span style={{fontSize:20}}>{m.icon||"📌"}</span>
+                              <div style={{fontSize:13,fontWeight:600,color:"var(--dark)"}}>{m.label}</div>
+                            </div>
+                            <div style={{display:"flex",gap:4,flexShrink:0}}>
+                              <button className="edit-btn" onClick={()=>openEdit(m)}>✏️</button>
+                              <button className="delete-btn" onClick={()=>onDelete(m.id)}>🗑</button>
+                            </div>
+                          </div>
+                          <div style={{fontSize:11,color:past?"var(--rose)":"var(--mid)",marginTop:6,fontWeight:past?600:400}}>{fmtDate(m.date)}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div style={{height:8}}/>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+            {/* Items without group */}
+            {sorted.filter(m=>{
+              const mb=m.monthsBefore;
+              if(mb!==undefined) return false;
+              const wd=new Date(wedding.date), md=new Date(m.date);
+              const diff=Math.round((wd-md)/(1000*60*60*24*30));
+              return diff<0 || diff>12;
+            }).map(m=>{
+              const past=new Date(m.date)<today;
+              return (
+                <div key={m.id} style={{display:"flex",gap:14,marginBottom:14,position:"relative"}}>
+                  <div style={{position:"absolute",left:-22,top:12,width:16,height:16,borderRadius:"50%",background:past?"var(--rose)":"var(--card)",border:"2px solid var(--rose)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    {past&&<span style={{color:"white",fontSize:8,fontWeight:700}}>✓</span>}
+                  </div>
+                  <div className="timeline-item" style={{opacity:past?0.7:1}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <span style={{fontSize:20}}>{m.icon||"📌"}</span>
+                        <div style={{fontSize:13,fontWeight:600,color:"var(--dark)"}}>{m.label}</div>
+                      </div>
+                      <div style={{display:"flex",gap:4,flexShrink:0}}>
+                        <button className="edit-btn" onClick={()=>openEdit(m)}>✏️</button>
+                        <button className="delete-btn" onClick={()=>onDelete(m.id)}>🗑</button>
+                      </div>
+                    </div>
+                    <div style={{fontSize:11,color:past?"var(--rose)":"var(--mid)",marginTop:6,fontWeight:past?600:400}}>{fmtDate(m.date)}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {show&&(
@@ -777,13 +1050,13 @@ function TimelinePage({ timeline, onAdd, onDelete, onEdit, wedding }) {
           <div className="modal">
             <div className="modal-handle"/>
             <div className="modal-title">{editItem?"Edit":"Tambah"} Timeline</div>
-            <div className="field-label">Nama Milestone</div>
+            <div className="field-label">Nama Tugasan</div>
             <input className="field-input" placeholder="cth: Tempah dewan" value={label} onChange={e=>setLabel(e.target.value)}/>
             <div className="field-label">Tarikh</div>
             <input className="field-input" type="date" value={dateVal} onChange={e=>setDateVal(e.target.value)}/>
             <div className="field-label">Ikon</div>
             <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14}}>
-              {ICONS.map(ic=><button key={ic} onClick={()=>setIcon(ic)} style={{fontSize:22,background:icon===ic?"var(--rose-pale)":"var(--section-bg)",border:icon===ic?"2px solid var(--rose)":"2px solid transparent",borderRadius:10,width:40,height:40,cursor:"pointer"}}>{ic}</button>)}
+              {ICONS.map(ic=><button key={ic} onClick={()=>setIcon(ic)} style={{fontSize:20,background:icon===ic?"var(--rose-pale)":"var(--section-bg)",border:icon===ic?"2px solid var(--rose)":"2px solid transparent",borderRadius:10,width:38,height:38,cursor:"pointer"}}>{ic}</button>)}
             </div>
             <div className="modal-footer"><button className="btn-cancel" onClick={()=>setShow(false)}>Batal</button><button className="btn-save" onClick={save} disabled={!label||!dateVal||saving}>{saving?"...":"Simpan"}</button></div>
           </div>
@@ -796,25 +1069,21 @@ function TimelinePage({ timeline, onAdd, onDelete, onEdit, wedding }) {
 // ─── INSPIRASI ───────────────────────────────────────────
 function InspirasiPage({ inspirasi, onAdd, onDelete, onEdit, weddingId }) {
   const [show,setShow]=useState(false), [editItem,setEditItem]=useState(null);
-  const [nota,setNota]=useState(""), [imgFile,setImgFile]=useState(null), [preview,setPreview]=useState(""), [saving,setSaving]=useState(false);
+  const [nota,setNota]=useState(""), [preview,setPreview]=useState(""), [saving,setSaving]=useState(false);
   const fileRef=useRef();
 
-  function openAdd(){ setEditItem(null); setNota(""); setImgFile(null); setPreview(""); setShow(true); }
-  function openEdit(item){ setEditItem(item); setNota(item.nota||""); setImgFile(null); setPreview(item.imgUrl||""); setShow(true); }
+  function openAdd(){ setEditItem(null); setNota(""); setPreview(""); setShow(true); }
+  function openEdit(item){ setEditItem(item); setNota(item.nota||""); setPreview(item.imgUrl||""); setShow(true); }
 
-  function onFileChange(e){
+  async function onFileChange(e){
     const f=e.target.files[0]; if(!f)return;
-    setImgFile(f); setPreview(URL.createObjectURL(f));
+    const b64 = await fileToBase64(f);
+    setPreview(b64);
   }
 
   async function save(){
     setSaving(true);
-    let imgUrl = editItem?.imgUrl||"";
-    if(imgFile){
-      const r=sref(storage,`weddings/${weddingId}/inspirasi/${Date.now()}`);
-      await uploadBytes(r,imgFile);
-      imgUrl=await getDownloadURL(r);
-    }
+    const imgUrl = preview || editItem?.imgUrl || "";
     if(editItem){ await onEdit(editItem.id,{nota,imgUrl}); }
     else { await onAdd({nota,imgUrl,createdAt:new Date().toISOString()}); }
     setSaving(false); setShow(false);
@@ -835,7 +1104,6 @@ function InspirasiPage({ inspirasi, onAdd, onDelete, onEdit, weddingId }) {
         ))}
       </div>
 
-      {/* View modal */}
       {viewItem&&(
         <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setViewItem(null)}>
           <div className="modal" style={{maxHeight:"90vh"}}>
@@ -845,7 +1113,7 @@ function InspirasiPage({ inspirasi, onAdd, onDelete, onEdit, weddingId }) {
             <div style={{display:"flex",gap:10}}>
               <button className="btn-cancel" style={{flex:1}} onClick={()=>setViewItem(null)}>Tutup</button>
               <button className="btn-save" style={{flex:1}} onClick={()=>{setViewItem(null);openEdit(viewItem);}}>✏️ Edit</button>
-              <button style={{flex:1,padding:13,background:"#FFE8EC",color:"#E05050",border:"none",borderRadius:"var(--radius-sm)",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"DM Sans,sans-serif"}} onClick={()=>{onDelete(viewItem.id);setViewItem(null);}}>🗑 Padam</button>
+              <button style={{flex:1,padding:13,background:"var(--rose-pale)",color:"#E05050",border:"none",borderRadius:"var(--radius-sm)",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"DM Sans,sans-serif"}} onClick={()=>{onDelete(viewItem.id);setViewItem(null);}}>🗑 Padam</button>
             </div>
           </div>
         </div>
@@ -858,11 +1126,11 @@ function InspirasiPage({ inspirasi, onAdd, onDelete, onEdit, weddingId }) {
             <div className="modal-title">{editItem?"Edit":"Tambah"} Inspirasi 🖼️</div>
             <label className="img-upload-label">
               <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={onFileChange}/>
-              {preview?<img src={preview} style={{width:"100%",borderRadius:10}} alt="preview"/>:"📁 Pilih Gambar"}
+              {preview?<img src={preview} style={{width:"100%",borderRadius:10}} alt="preview"/>:"📁 Pilih Gambar (dikecilkan auto)"}
             </label>
             <div className="field-label">Nota / Keterangan</div>
             <textarea className="field-input" rows={3} placeholder="Tulis nota untuk inspirasi ini..." value={nota} onChange={e=>setNota(e.target.value)}/>
-            <div className="modal-footer"><button className="btn-cancel" onClick={()=>setShow(false)}>Batal</button><button className="btn-save" onClick={save} disabled={saving}>{saving?"Uploading...":"Simpan"}</button></div>
+            <div className="modal-footer"><button className="btn-cancel" onClick={()=>setShow(false)}>Batal</button><button className="btn-save" onClick={save} disabled={saving}>{saving?"Menyimpan...":"Simpan"}</button></div>
           </div>
         </div>
       )}
